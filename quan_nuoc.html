@@ -1,0 +1,314 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Quản lý quán nước - Mini</title>
+  <!-- Tailwind CDN (quick start) -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- React + ReactDOM + Babel (for demo single file) -->
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+</head>
+<body class="bg-slate-50 text-slate-800">
+  <div id="root" class="p-6 max-w-6xl mx-auto"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect } = React;
+
+    // Helpers: lưu/đọc localStorage
+    const STORAGE_KEY = 'mini_quan_nuoc_v1';
+    function loadData() {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (!raw) {
+        // mẫu dữ liệu khởi tạo
+        return {
+          menu: [
+            { id: 'm1', name: 'Trà đá', price: 5000, stock: 100 },
+            { id: 'm2', name: 'Trà sữa', price: 25000, stock: 30 },
+            { id: 'm3', name: 'Cà phê sữa', price: 20000, stock: 25 },
+          ],
+          orders: [], // từng hóa đơn
+        };
+      }
+      try { return JSON.parse(raw); } catch { return { menu: [], orders: [] }; }
+    }
+    function saveData(data) { localStorage.setItem(STORAGE_KEY, JSON.stringify(data)); }
+
+    // UUID ngắn
+    const uid = (p='') => Date.now().toString(36) + Math.random().toString(36).slice(2,8) + p;
+
+    function App() {
+      const [data, setData] = useState(loadData);
+      const [selected, setSelected] = useState([]); // [{id, qty}]
+      const [keyword, setKeyword] = useState('');
+
+      useEffect(() => saveData(data), [data]);
+
+      // Menu CRUD
+      const addMenuItem = (item) => {
+        setData(d => ({ ...d, menu: [...d.menu, { ...item, id: uid('m') }] }));
+      };
+      const updateMenuItem = (id, patch) => {
+        setData(d => ({ ...d, menu: d.menu.map(m => m.id===id ? {...m, ...patch} : m) }));
+      };
+      const deleteMenuItem = (id) => {
+        if (!confirm('Xóa món?')) return;
+        setData(d => ({ ...d, menu: d.menu.filter(m => m.id !== id) }));
+      };
+
+      // Order actions
+      const addToOrder = (id, qty=1) => {
+        const menuItem = data.menu.find(m => m.id === id);
+        if (!menuItem) return;
+        const inSelected = selected.find(s => s.id === id);
+        const newQty = (inSelected ? inSelected.qty : 0) + qty;
+        if (newQty > menuItem.stock) {
+          alert('Không đủ tồn kho');
+          return;
+        }
+        setSelected(sel => {
+          const other = sel.filter(s => s.id !== id);
+          return [...other, { id, qty: newQty }];
+        });
+      };
+      const setQty = (id, qty) => {
+        setSelected(sel => sel.map(s => s.id===id ? { ...s, qty } : s));
+      };
+      const removeFromOrder = (id) => setSelected(sel => sel.filter(s => s.id !== id));
+
+      const placeOrder = (customer='') => {
+        if (selected.length === 0) { alert('Chưa chọn món'); return; }
+        // validate stock
+        for (const s of selected) {
+          const m = data.menu.find(x => x.id === s.id);
+          if (!m || s.qty > m.stock) { alert(`Món ${m ? m.name : s.id} không đủ hàng`); return; }
+        }
+        // tạo hóa đơn
+        const items = selected.map(s => {
+          const m = data.menu.find(x => x.id === s.id);
+          return { id: s.id, name: m.name, price: m.price, qty: s.qty, total: m.price * s.qty };
+        });
+        const total = items.reduce((a,b)=>a+b.total,0);
+        const invoice = { id: uid('o'), time: new Date().toISOString(), customer, items, total };
+        // trừ tồn kho
+        const newMenu = data.menu.map(m => {
+          const s = selected.find(x => x.id === m.id);
+          if (s) return { ...m, stock: m.stock - s.qty };
+          return m;
+        });
+        setData(d => ({ ...d, menu: newMenu, orders: [invoice, ...d.orders] }));
+        setSelected([]);
+        alert('Đã bán — Tổng: ' + total.toLocaleString() + ' VND');
+      };
+
+      const filteredMenu = data.menu.filter(m => m.name.toLowerCase().includes(keyword.toLowerCase()));
+
+      // Reports: tổng doanh thu
+      const totalSales = data.orders.reduce((a,b)=>a+b.total,0);
+      const todaySales = data.orders
+        .filter(o => new Date(o.time).toDateString() === new Date().toDateString())
+        .reduce((a,b)=>a+b.total,0);
+
+      // Export / Import
+      const exportJson = () => {
+        const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url; a.download = 'quan_nuoc_export.json'; a.click(); URL.revokeObjectURL(url);
+      };
+      const importJson = (file) => {
+        const r = new FileReader();
+        r.onload = e => {
+          try {
+            const parsed = JSON.parse(e.target.result);
+            if (confirm('Ghi đè dữ liệu hiện tại?')) setData(parsed);
+          } catch (err) { alert('File không hợp lệ'); }
+        };
+        r.readAsText(file);
+      };
+
+      return (
+        <div>
+          <header className="mb-6">
+            <h1 className="text-2xl font-bold">Quản lý quán nước (Mini)</h1>
+            <p className="text-sm text-slate-600">Lưu cục bộ trên trình duyệt. Dùng mẫu để bắt đầu.</p>
+          </header>
+
+          <div className="grid md:grid-cols-3 gap-6">
+            {/* Left: Menu & tìm */}
+            <div className="md:col-span-2 bg-white p-4 rounded shadow">
+              <div className="flex items-center gap-3 mb-3">
+                <input value={keyword} onChange={e=>setKeyword(e.target.value)}
+                       placeholder="Tìm món..." className="flex-1 input border p-2 rounded" />
+                <AddMenuForm onAdd={addMenuItem} />
+              </div>
+
+              <div className="space-y-2 max-h-96 overflow-auto">
+                {filteredMenu.map(m => (
+                  <div key={m.id} className="flex items-center justify-between p-2 border rounded">
+                    <div>
+                      <div className="font-medium">{m.name} <span className="text-sm text-slate-500">({m.id})</span></div>
+                      <div className="text-sm text-slate-600">{m.price.toLocaleString()} VND — Tồn: {m.stock}</div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button onClick={()=>addToOrder(m.id,1)} className="px-3 py-1 rounded bg-emerald-500 text-white text-sm">Thêm</button>
+                      <EditMenuButton item={m} onUpdate={updateMenuItem} onDelete={()=>deleteMenuItem(m.id)} />
+                    </div>
+                  </div>
+                ))}
+                {filteredMenu.length === 0 && <div className="text-slate-500 p-2">Không có món</div>}
+              </div>
+            </div>
+
+            {/* Right: Order + báo cáo */}
+            <div className="bg-white p-4 rounded shadow">
+              <h2 className="font-semibold mb-2">Đơn hàng</h2>
+              <div className="space-y-2">
+                {selected.length === 0 && <div className="text-slate-500">Chưa chọn món</div>}
+                {selected.map(s => {
+                  const m = data.menu.find(x=>x.id===s.id) || {};
+                  return (
+                    <div key={s.id} className="flex items-center justify-between">
+                      <div>
+                        <div className="font-medium">{m.name || '---'}</div>
+                        <div className="text-sm text-slate-600">{(m.price||0).toLocaleString()} x {s.qty} = {(m.price||0)*s.qty}</div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <input type="number" min="1" value={s.qty} onChange={e=>setQty(s.id, Math.max(1, Number(e.target.value)||1))}
+                               className="w-16 border p-1 rounded text-right" />
+                        <button onClick={()=>removeFromOrder(s.id)} className="text-sm text-red-600">Xóa</button>
+                      </div>
+                    </div>
+                  );
+                })}
+                <div className="pt-2 border-t mt-2">
+                  <div className="flex justify-between">
+                    <div className="font-medium">Tổng:</div>
+                    <div className="font-semibold">
+                      {selected.reduce((acc,s)=> {
+                        const m = data.menu.find(x=>x.id===s.id);
+                        return acc + (m ? m.price * s.qty : 0);
+                      },0).toLocaleString()} VND
+                    </div>
+                  </div>
+
+                  <div className="mt-3 flex gap-2">
+                    <button onClick={()=>placeOrder('Khách lẻ')} className="flex-1 bg-blue-600 text-white py-2 rounded">Thanh toán</button>
+                    <button onClick={()=>{ setSelected([]); }} className="px-3 py-2 border rounded">Hủy</button>
+                  </div>
+                </div>
+
+                <hr />
+
+                <h3 className="font-medium">Báo cáo nhanh</h3>
+                <div className="text-sm text-slate-600">
+                  Tổng hóa đơn: <span className="font-medium">{data.orders.length}</span><br/>
+                  Doanh thu tổng: <span className="font-medium">{totalSales.toLocaleString()} VND</span><br/>
+                  Doanh thu hôm nay: <span className="font-medium">{todaySales.toLocaleString()} VND</span>
+                </div>
+
+                <div className="mt-2 flex gap-2">
+                  <button onClick={exportJson} className="flex-1 py-2 border rounded">Export / Backup</button>
+                  <label className="flex-1 py-2 border rounded text-center cursor-pointer">
+                    Import
+                    <input type="file" accept="application/json" onChange={e=>importJson(e.target.files[0])} className="hidden" />
+                  </label>
+                </div>
+                <div className="mt-2 text-xs text-slate-500">Lưu ý: dữ liệu lưu trên trình duyệt. Export để backup.</div>
+              </div>
+            </div>
+          </div>
+
+          {/* Orders list */}
+          <div className="mt-6 bg-white p-4 rounded shadow">
+            <h2 className="font-semibold mb-3">Lịch sử đơn (mới → cũ)</h2>
+            <div className="space-y-2 max-h-60 overflow-auto">
+              {data.orders.map(o => (
+                <div key={o.id} className="p-3 border rounded">
+                  <div className="flex justify-between">
+                    <div>
+                      <div className="font-medium">HĐ: {o.id} — {new Date(o.time).toLocaleString()}</div>
+                      <div className="text-sm text-slate-600">Khách: {o.customer || '—'}</div>
+                    </div>
+                    <div className="text-right font-semibold">{o.total.toLocaleString()} VND</div>
+                  </div>
+                  <details className="mt-2 text-sm">
+                    <summary className="cursor-pointer text-slate-600">Chi tiết</summary>
+                    <ul className="mt-2">
+                      {o.items.map(it => <li key={it.id}>{it.name} × {it.qty} — {(it.price*it.qty).toLocaleString()} VND</li>)}
+                    </ul>
+                  </details>
+                </div>
+              ))}
+              {data.orders.length===0 && <div className="text-slate-500">Chưa có đơn hàng</div>}
+            </div>
+          </div>
+
+          <footer className="mt-6 text-xs text-slate-500">Phiên bản demo — cần mở rộng (tài khoản nhân viên, báo cáo theo ngày, in hóa đơn...) nếu muốn triển khai thật.</footer>
+        </div>
+      );
+    }
+
+    // Component: form thêm món
+    function AddMenuForm({ onAdd }) {
+      const [open, setOpen] = React.useState(false);
+      const [name, setName] = React.useState('');
+      const [price, setPrice] = React.useState(10000);
+      const [stock, setStock] = React.useState(10);
+
+      const submit = (e) => {
+        e.preventDefault();
+        if (!name.trim()) return alert('Nhập tên món');
+        onAdd({ name: name.trim(), price: Number(price) || 0, stock: Number(stock) || 0 });
+        setName(''); setPrice(10000); setStock(10); setOpen(false);
+      };
+
+      return open ? (
+        <form onSubmit={submit} className="flex items-center gap-2">
+          <input value={name} onChange={e=>setName(e.target.value)} placeholder="Tên món" className="border p-1 rounded" />
+          <input value={price} onChange={e=>setPrice(e.target.value)} className="w-24 border p-1 rounded" />
+          <input value={stock} onChange={e=>setStock(e.target.value)} className="w-20 border p-1 rounded" />
+          <button className="px-3 py-1 bg-green-600 text-white rounded">Thêm</button>
+          <button type="button" onClick={()=>setOpen(false)} className="px-2 py-1 border rounded">Hủy</button>
+        </form>
+      ) : (
+        <button onClick={()=>setOpen(true)} className="px-3 py-1 bg-indigo-600 text-white rounded">Thêm món</button>
+      );
+    }
+
+    // Component: chỉnh sửa món
+    function EditMenuButton({ item, onUpdate, onDelete }) {
+      const [open, setOpen] = React.useState(false);
+      const [name, setName] = React.useState(item.name);
+      const [price, setPrice] = React.useState(item.price);
+      const [stock, setStock] = React.useState(item.stock);
+
+      useEffect(()=> { setName(item.name); setPrice(item.price); setStock(item.stock); }, [item]);
+
+      const save = () => {
+        onUpdate(item.id, { name: name.trim(), price: Number(price)||0, stock: Number(stock)||0 });
+        setOpen(false);
+      };
+
+      return open ? (
+        <div className="bg-slate-50 p-2 rounded border flex items-center gap-2">
+          <input value={name} onChange={e=>setName(e.target.value)} className="w-32 border p-1 rounded" />
+          <input value={price} onChange={e=>setPrice(e.target.value)} className="w-20 border p-1 rounded" />
+          <input value={stock} onChange={e=>setStock(e.target.value)} className="w-16 border p-1 rounded" />
+          <button onClick={save} className="px-2 py-1 bg-emerald-500 text-white rounded">OK</button>
+          <button onClick={()=>setOpen(false)} className="px-2 py-1 border rounded">×</button>
+        </div>
+      ) : (
+        <div className="flex items-center gap-2">
+          <button onClick={()=>setOpen(true)} className="px-2 py-1 border rounded text-sm">Sửa</button>
+          <button onClick={onDelete} className="px-2 py-1 border rounded text-sm text-red-600">X</button>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>
